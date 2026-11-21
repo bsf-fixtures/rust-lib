@@ -5,34 +5,63 @@
   Every agent reads this first. The question it has to answer is "where would
   this change go?" — so it names folders and what each one owns, not what the
   product does.
-
-  {{PLACEHOLDERS}} are filled in by setup.
 -->
 
-# Feature map — {{REPO_NAME}}
+# Feature map — rust-lib
 
-{{ONE_LINE_WHAT_THIS_REPO_IS}}
+A single Rust library crate, `invoice-core`, that does invoice arithmetic in
+integer cents: parse an amount, total the lines, take tax on the total. No
+binary, no server, no dependencies.
 
 ## Feature folders
 
+This repo has no feature folders. `src/` is flat and holds three files, so
+the unit that owns a concern is a **module**, not a directory. The rows below
+are modules for that reason; a table of one folder would say nothing.
+
 | Folder | Owns | Depends on |
 | --- | --- | --- |
-{{FEATURE_FOLDER_ROWS}}
+| `src/money.rs` | `Cents`, the money type: `parse` of a `"12.34"` string into cents, `basis_points` for applying a percentage with half-away-from-zero rounding, `to_string_amount` for formatting, and the `Add` and `Sum` impls. | nothing — `std` only |
+| `src/invoice.rs` | `Line`, `Invoice` and `Total`: a line's subtotal (`unit_price × quantity`), and `Invoice::total`, which sums the lines and takes `tax_bps` on that net rather than on each line. | `src/money.rs` |
+| `src/lib.rs` | The crate root. Declares the two modules and re-exports `Invoice`, `Line`, `Total` and `Cents` so callers can write `invoice_core::Cents` without naming a module. Holds no logic. | both modules |
 
 ## Shared
 
 | Folder | What it is | Rule |
 | --- | --- | --- |
-{{SHARED_FOLDER_ROWS}}
+| `src/money.rs` | The shared module in practice: `Cents` is the type `invoice.rs` is written in, and anything new that touches an amount will depend on it too. | Money is `Cents`, never `f32`/`f64` and never a bare `i64` passed around as "an amount". A new module takes and returns `Cents`. |
+| `src/lib.rs` | The public surface. | A type callers are meant to use is re-exported here. Adding a module means adding its `pub mod` line and deciding, explicitly, what it re-exports. |
+
+There is no `shared/` directory and no reason to create one at this size.
 
 ## Where things go
 
-- **A new feature** gets its own folder under {{FEATURE_ROOT}}.
-- **Something used by two features** moves to {{SHARED_ROOT}}, and not before
-  the second use. One caller is not a shared concern.
-- **Nothing in a feature folder imports from another feature folder.** Where
-  two features need the same thing, it belongs in shared.
+- **A new feature** gets its own module under `src/` — a new `src/<name>.rs`
+  with a `pub mod <name>;` line in `src/lib.rs`, and its tests in a
+  `#[cfg(test)] mod tests` at the bottom of that same file. A directory under
+  `src/` only once a concern genuinely needs more than one file.
+- **Something used by two features** moves to `src/money.rs` when it is about
+  amounts, and otherwise to a new module of its own, and not before the
+  second use. One caller is not a shared concern.
+- **Nothing in a feature module imports from another feature module**, with
+  the one standing exception that `invoice.rs` imports `money.rs`: money is
+  the shared concern, not a peer feature. Two features needing the same thing
+  means it belongs in a shared module.
 
 ## Not in this repo
 
-{{OUT_OF_SCOPE}}
+- **No binary and no server.** `Cargo.toml` declares no `[[bin]]`, there is
+  no `main()`, and nothing opens a socket. The README says this is on
+  purpose: it is the fixture for verification where there is nothing to open
+  and nothing to curl.
+- **No dependencies.** `[dependencies]` and `[dev-dependencies]` are both
+  empty and `Cargo.lock` lists only `invoice-core` itself. There is no async
+  runtime, no serde, no error-handling crate.
+- **No persistence, no I/O, no network.** Nothing reads a file, a database or
+  an environment variable. An `Invoice` is built by the caller in memory.
+- **No invoice rendering.** No PDF, no HTML, no template. `to_string_amount`
+  formats a single amount and that is the whole of the output surface.
+- **No currencies.** `Cents` carries a number and no currency code, so
+  conversion and multi-currency totals do not exist here.
+- **No dates, no customers, no numbering logic.** `Invoice::number` is a
+  `String` the caller supplies and nothing validates or generates it.
