@@ -1,13 +1,18 @@
 {
   "schema": "sandbox/1",
   "tier": "build_and_test",
-  "tier_reason": "invoice-core is a library crate: Cargo.toml declares no [[bin]] and no [[example]], src/ contains no main(), and nothing in the repo opens a socket. There is no process to start and no URL to open, so renders is unreachable by construction rather than by a missing dependency. The crate compiles and its 7 unit tests run, which is build_and_test.",
+  "tier_reason": "invoice-core is a library crate: Cargo.toml declares no [[bin]] and no [[example]], src/ contains no main(), and nothing in the repo opens a socket. There is no process to start and no URL to open, so renders is unreachable by construction rather than by a missing dependency. The crate compiles and its 7 unit tests run, which is build_and_test. This amendment adds a coverage report and does not change the tier.",
   "commands": {
-    "install": "rustup component add clippy && cargo fetch --locked",
+    "install": "rustup component add clippy llvm-tools-preview && cargo fetch --locked && (command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked --version \"^0.9\")",
     "build": "cargo build --all-targets",
     "run": null,
     "test": "cargo test --all-targets",
-    "seed": null
+    "seed": null,
+    "coverage": "mkdir -p target/coverage && cargo llvm-cov --all-targets --lcov --output-path target/coverage/lcov.info"
+  },
+  "coverage_report": {
+    "path": "target/coverage/lcov.info",
+    "format": "lcov"
   },
   "app_url": null,
   "env": [
@@ -28,6 +33,11 @@
   "stubs": [],
   "dropped": [
     {
+      "from": "the amendment report coverage-and-checkers, static_checks half",
+      "what": "A declared static check running clippy, e.g. cargo clippy --all-targets --all-features --message-format=json | clippy-sarif > clippy.sarif",
+      "why": "The factory already runs clippy itself, so this would be a second copy of the same checker rather than one the factory does not run. Measured here: bsf's native runner is `cargo clippy --quiet --message-format=json -- -W clippy::all` (runStaticTools pushes it for any repo with a Cargo.toml), and measuredCounts sums every tool's counts per rule per file. With one probe unwrap() in library code and one in a #[cfg(test)] module, the native command reported clippy::unwrap_used at src/money.rs:50 once; adding --all-targets reported line 50 twice, because the lib is compiled again as the unit-test target. Declaring it would therefore have counted a single library unwrap three times and listed every finding three times in the gate output. The test-module finding the native run misses (line 79) is already a hard failure in the repo's own ci.yml, which runs cargo clippy --all-targets -- -D warnings on every pull request. Paying triple-counted, triple-listed findings for coverage the repo's CI already enforces is a worse gate, so static_checks is left empty on purpose rather than by omission. clippy is the only checker this repo uses: ci.yml runs nothing else, and there is no rustfmt.toml, no .gitleaks.toml, no cargo-deny and no cargo-audit."
+    },
+    {
       "from": ".github/workflows/ci.yml",
       "what": "cargo clippy --all-targets -- -D warnings",
       "why": "It is a lint, not a build. `bsf gates static` runs clippy itself through its own rule pack and compares each rule's count per file against .factory/guardrails/baselines.json, which is the point of Cargo.toml setting clippy::unwrap_used to \"warn\" rather than \"deny\". Putting -D warnings in the sandbox's build command would fail the build on the first new warning and hide the per-rule comparison the gate exists to make. The install command still adds the clippy component so the gate has it."
@@ -43,18 +53,25 @@
       "why": "The README gives `cargo test` and `cargo clippy --all-targets -- -D warnings`. Both were run here before being recorded; `--all-targets` was added to the test command so that example and integration targets a builder adds later are compiled by the same command, matching ci.yml rather than the README's shorter form."
     },
     {
-      "from": "toolchain, verified here but kept out of the build path",
-      "what": "rustup component add llvm-tools-preview && cargo install cargo-llvm-cov --locked, then cargo llvm-cov --all-targets --lcov --output-path coverage/lcov.info",
-      "why": "This was installed and run in the setup sandbox: it passes and reports 100% line coverage on both source files, in the coverage/lcov.info path `bsf gates coverage` reads. It is deliberately not in install or test. The repo configures no coverage tool, so this would put a from-source cargo install of a tool the repo does not declare into the critical path that the trial measures the tier on, for a gate that is non-blocking today (coverage.json has floor_pct 0, so a missing report is neutral, not a failure). Recorded under capabilities.not_exercised with the exact recipe so an amendment episode is cheap if a role needs it."
+      "from": "cargo-llvm-cov's other output formats",
+      "what": "cargo llvm-cov --html / --cobertura / --json, and cargo llvm-cov report --open",
+      "why": "The gate reads one file in one format. lcov is the format cargo-llvm-cov emits natively and one bsf's readCoverage parses directly, so no conversion step is needed; generating the others would add time to every pull request for output nothing reads."
+    },
+    {
+      "from": "coverage/lcov.info, the conventional path",
+      "what": "Writing the report to coverage/lcov.info, which is also bsf's default discovery path",
+      "why": "`.gitignore` ignores only /target and .playwright-cli/, so a coverage/ directory left behind by an agent that ran the command locally is untracked and lands in a diff the first time anything does `git add -A`. target/coverage/lcov.info is inside the already-ignored /target, and the path is declared in coverage_report so discovery is not relied on."
     }
   ],
   "capabilities": {
     "exercised": [
-      "Compiling the crate and all its targets from source with cargo build --all-targets, with no network access needed after install because the dependency and dev-dependency tables are both empty.",
+      "Compiling the crate and all its targets from source with cargo build --all-targets. After the install step nothing further is fetched, because the dependency and dev-dependency tables are both empty.",
       "Running the 7 unit tests in src/money.rs and src/invoice.rs with cargo test --all-targets: amount parsing, rejection of non-money input, half-away-from-zero rounding in basis points, two-place formatting, line subtotals, tax taken on the net total rather than per line, and the empty invoice.",
-      "Calling the library directly from a scratch example, which is how a verifier sees behaviour here since there is nothing to open or curl. Verified in this sandbox: writing examples/scratch_check.rs against the names re-exported from lib.rs (Cents, Invoice, Line, Total) and running cargo run --example scratch_check printed net 64.97, tax 12.99, gross 77.96 for three lines of 19.99 plus one of 5.00 at 2000 bps, and None for the bad amount \"1.5\".",
-      "Linting with clippy: cargo clippy --all-targets runs clean, and the clippy component is installed by the install command so `bsf gates static` has the tool it needs for the clippy::unwrap_used baseline.",
-      "Rebuilding offline: the empty [dependencies] and [dev-dependencies] tables mean nothing is fetched, so a change that adds a dependency is visible as the first command that needs the network."
+      "Measuring line coverage, new in this amendment. `mkdir -p target/coverage && cargo llvm-cov --all-targets --lcov --output-path target/coverage/lcov.info` runs the same 7 tests under instrumentation and writes lcov at target/coverage/lcov.info. Verified here from a removed target/ directory: exit 0, two SF records (src/invoice.rs LF:30 LH:30, src/money.rs LF:55 LH:55), so 85 of 85 lines, which bsf's fromLcov reads as 100%. This is what the tests gate runs in place of commands.test, so diff coverage of a changed file is now measurable instead of the coverage gate reporting that there is no report.",
+      "Failing the tests gate when a test fails, through the coverage command rather than only through cargo test. Verified by changing the expected net in adds_the_lines_and_the_tax: cargo llvm-cov exited 101 and printed \"6 passed; 1 failed\", so substituting it for commands.test does not silently turn a red test green.",
+      "Calling the library directly from a scratch example, which is how a verifier sees behaviour here since there is nothing to open or curl. Verified in setup: writing examples/scratch_check.rs against the names re-exported from lib.rs (Cents, Invoice, Line, Total) and running cargo run --example scratch_check printed net 64.97, tax 12.99, gross 77.96 for three lines of 19.99 plus one of 5.00 at 2000 bps, and None for the bad amount \"1.5\".",
+      "Linting with clippy: cargo clippy --all-targets runs clean, and the clippy component is installed by the install command so `bsf gates static` has the tool it needs for the clippy::unwrap_used baseline. Confirmed in this episode that the static gate does run clippy on this repo without anything being declared: runStaticTools adds it for any root holding a Cargo.toml.",
+      "Rebuilding offline after install: the empty [dependencies] and [dev-dependencies] tables mean the crate itself fetches nothing, so a change that adds a dependency is visible as the first command that needs the network."
     ],
     "not_exercised": [
       {
@@ -63,21 +80,37 @@
         "why": "The crate has no binary target and no server. This is the repo's stated purpose as a fixture: runtime verification where there is nothing to open and nothing to curl. A verifier has to call the code from a scratch example or a test, which is listed under exercised."
       },
       {
-        "what": "Line coverage is not measured, so `bsf gates coverage` finds no report and reports neutral rather than checking the 80% diff-coverage minimum in .factory/guardrails/coverage.json.",
+        "what": "Lint coverage of code inside #[cfg(test)] modules, examples and benches, by the factory's static gate. The gate's own clippy run uses the default target set, so a warning that only appears when the test target is compiled is not counted and not baselined.",
         "paths": [
           "src/money.rs",
           "src/invoice.rs"
         ],
-        "why": "The repo declares no coverage tool. Making it work needs cargo-llvm-cov, which is not preinstalled and has to be compiled from source. The recipe was verified here and is recorded under dropped; it was kept out of install and test so that a tool the repo does not declare cannot sink the measured tier for a gate that does not block today. Since floor_pct is 0, enabling it would immediately ratchet the floor toward 100%, which is a guardrail decision for the hardener rather than something setup should impose."
+        "why": "Measured, not assumed: a probe unwrap() inside src/money.rs's #[cfg(test)] mod tests was absent from the native command's output while the one in library code was reported. It is left uncovered by the factory because closing it means declaring a second clippy run, which triple-counts every library finding (see dropped). The repo's own ci.yml already fails the pull request on it with cargo clippy --all-targets -- -D warnings, so the warning is caught, just not by the factory's per-rule baseline."
       },
       {
-        "what": "Documentation tests. cargo test --all-targets does not run doctests.",
+        "what": "Branch coverage. The lcov report carries BRF:0 and BRH:0 for both files, so only line coverage is real.",
+        "paths": [
+          "src/money.rs",
+          "src/invoice.rs"
+        ],
+        "why": "cargo-llvm-cov derives lcov from LLVM region counters and does not emit branch records. bsf's fromLcov reads only SF, LF, LH and end_of_record, so it measures lines and nothing in the gate asks for branches. A fully line-covered match arm with an untested branch would still read as covered."
+      },
+      {
+        "what": "Coverage figures that exclude test code. The 100% total counts the lines of the #[cfg(test)] mod tests blocks themselves, because they live in the same files as the code they test.",
+        "paths": [
+          "src/money.rs",
+          "src/invoice.rs"
+        ],
+        "why": "cargo-llvm-cov can exclude whole files with --ignore-filename-regex, and this repo has no tests/ directory to exclude: the tests are inside src/money.rs and src/invoice.rs. So the total is flattering by construction. Diff coverage, which is the check with teeth at diff_min_pct 80, is affected the same way: a change that adds a function and a test for it in the same file counts the test's own lines as covered."
+      },
+      {
+        "what": "Documentation tests. Neither cargo test --all-targets nor cargo llvm-cov --all-targets runs doctests, so they are absent from both the tests gate and the coverage report.",
         "paths": [
           "src/lib.rs",
           "src/money.rs",
           "src/invoice.rs"
         ],
-        "why": "This matches ci.yml, which also uses --all-targets. The doc comments in all three files are prose explaining why a rule exists and contain no ``` examples, so there is nothing to run today. If a builder adds a doc example, cargo test --doc would be needed and is not in the test command."
+        "why": "This matches ci.yml, which also uses --all-targets. The doc comments in all three files are prose explaining why a rule exists and contain no ``` examples, so there is nothing to run today. If a builder adds a doc example, cargo test --doc would be needed and is in neither command."
       },
       {
         "what": "Integer overflow behaviour in release mode. Cents::basis_points computes self.0 * bps without checked arithmetic, unlike Cents::parse which uses checked_mul and checked_add.",
@@ -121,21 +154,60 @@
     {
       "attempt": 5,
       "tried": "Tested whether the coverage gate could be made real: rustup component add llvm-tools-preview && cargo install cargo-llvm-cov --locked, then cargo llvm-cov --all-targets --lcov --output-path coverage/lcov.info, after reading how bsf finds a report (readCoverage looks for coverage/lcov.info among others) and what it does without one.",
-      "observed": "The tool installed from source and exited 0, and the run produced coverage/lcov.info reporting LF:30 LH:30 for invoice.rs and LF:55 LH:55 for money.rs, so 100% of lines. But runCoverageGate returns neutral, not failure, when there is no report and floor_pct is 0, which is the case here. So the whole benefit is optional today, while the cost would be a from-source cargo install of a tool the repo does not declare sitting in the install step that the measured tier depends on.",
-      "changed": "Left the coverage tool out of install and test, and recorded the verified recipe under dropped and the gap under capabilities.not_exercised instead, so an amendment can turn it on deliberately. Then removed coverage/ and confirmed git status was unchanged from the start."
+      "observed": "The tool installed from source and exited 0, and the run produced coverage/lcov.info reporting LF:30 LH:30 for invoice.rs and LF:55 LH:55 for money.rs, so 100% of lines. But runCoverageGate returns neutral, not failure, when there is no report and floor_pct is 0, which is the case here. So the whole benefit looked optional, while the cost would be a from-source cargo install of a tool the repo does not declare sitting in the install step that the measured tier depends on.",
+      "changed": "Left the coverage tool out of install and test for round 1, and recorded the verified recipe under dropped and the gap under capabilities.not_exercised instead, so an amendment could turn it on deliberately."
     },
     {
       "attempt": 6,
-      "tried": "Validated the finished manifest with .factory/bin/bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json.",
-      "observed": "It printed \"valid sandbox manifest, tier build_and_test\" and exited 0. The claim is build_and_test with run and seed null and app_url null, which is what the trial should measure: install, build and test pass, the control run in an empty directory fails, and there is no run command for the trial to start, so reachedTier cannot return anything above build_and_test and should not return static.",
-      "changed": "Nothing after validation passed."
+      "tried": "Validated the round 1 manifest with .factory/bin/bsf sandbox check, then the trial ran install, build, test and the empty-directory control on a runner.",
+      "observed": "The manifest validated, and the trial reached build_and_test as claimed.",
+      "changed": "Nothing. That manifest was frozen at 2026-11-21T05:35:48Z."
     },
     {
       "attempt": 7,
+      "tried": "Amendment, from report coverage-and-checkers: \"the coverage gate reports no coverage report on every PR, so diff coverage is never measured; and where the factory has no built-in checker for the language, the static gate checks nothing.\" Before changing anything, read how the runner actually consumes both halves: runTestsGate, gatesTests, gatesCoverage, runCoverageGate, readCoverage/fromLcov, runStaticTools, runClippy, runSarifCheck, countSarif and measuredCounts in bsf.mjs, plus .factory/definition/factory.yaml and the verification job in .github/workflows/factory-gates.yml.",
+      "observed": "Four facts decided the rest. (1) gatesTests runs `build && coverage` in place of the test command when commands.coverage is set, so the report is written by the tests gate; gatesCoverage does not run anything, it only reads the file. (2) Both run in the same verification job, after `bsf sandbox start`, which itself runs commands.install, so anything the coverage command needs has to be installed there. (3) closedEnv keeps PATH and HOME from the runner, so a cargo subcommand in ~/.cargo/bin is still reachable under the closed environment. (4) existing_ci.test_check is null in factory.yaml, so the tests gate really does run the command rather than reading ci.yml's result. Also noted the cost of declaring coverage_report: runCoverageGate turns a missing report from neutral into a failure.",
+      "changed": "Decided the shape before running anything: cargo-llvm-cov in install, the coverage command writing lcov, and coverage_report declared."
+    },
+    {
+      "attempt": 8,
+      "tried": "Settled the static_checks half empirically rather than by reading. Inserted two probe unwrap() calls into src/money.rs, one in library code and one inside the #[cfg(test)] mod tests, then ran bsf's exact native command, `cargo clippy --quiet --message-format=json -- -W clippy::all`, and the --all-targets --all-features form a declared check would use, parsing both JSON streams the same way runClippy does.",
+      "observed": "The native command reported clippy::unwrap_used at src/money.rs:50 once and did not report the test-module one at line 79 at all. The --all-targets form reported line 50 twice and line 79 once, because the lib is compiled a second time as the unit-test target. Since runStaticTools pushes native clippy for any repo with a Cargo.toml and measuredCounts sums counts per rule per file across tools, a declared clippy check would have made one library unwrap count three and appear three times in the findings list. ci.yml already runs cargo clippy --all-targets -- -D warnings on every pull request, so the line-79 class of warning is a hard CI failure today.",
+      "changed": "Left static_checks empty, and wrote the measurement and the reasoning into dropped rather than leaving the absence unexplained. Reverted src/money.rs from a backup and confirmed git status was unchanged."
+    },
+    {
+      "attempt": 9,
+      "tried": "Built and tested the coverage command. rustup component add llvm-tools-preview, cargo install cargo-llvm-cov --locked (0.9.2), then mkdir -p target/coverage && cargo llvm-cov --all-targets --lcov --output-path target/coverage/lcov.info, after first trying it without the mkdir. Also re-ran the whole thing after rm -rf target to be sure nothing depended on a warm directory.",
+      "observed": "Without the mkdir the tests all pass and then it ends with \"error: failed to generate report: failed to write to file `target/coverage/lcov.info`: No such file or directory\" — cargo-llvm-cov does not create the parent directory. With it, exit 0 and a report with two SF records, src/invoice.rs LF:30 LH:30 and src/money.rs LF:55 LH:55. The SF paths are absolute, which fromLcov normalises with rel(root, file), so the keys come out as src/invoice.rs and src/money.rs and match what changedFilesSince returns. The install took 63s from source. BRF and BRH are both 0: there are no branch records.",
+      "changed": "Added the mkdir -p to the coverage command, and chose target/coverage/lcov.info over the conventional coverage/lcov.info so the output sits inside the /target that .gitignore already ignores."
+    },
+    {
+      "attempt": 10,
+      "tried": "Checked that substituting coverage for the test command cannot hide a failing test, since gatesTests runs it instead of commands.test. Changed the expected net in invoice::tests::adds_the_lines_and_the_tax from Cents(2550) to Cents(9999) and ran the coverage command.",
+      "observed": "Exit 101, \"test invoice::tests::adds_the_lines_and_the_tax ... FAILED\", \"test result: FAILED. 6 passed; 1 failed\". The exit status propagates.",
+      "changed": "Nothing. Restored src/invoice.rs from a backup."
+    },
+    {
+      "attempt": 11,
+      "tried": "Made the install step idempotent and pinned, then timed it: rustup component add clippy llvm-tools-preview && cargo fetch --locked && (command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov --locked --version \"^0.9\"). Verified the version requirement resolves by installing it again into a throwaway --root.",
+      "observed": "With the component and the binary already present the whole install is a no-op in 0.1s, so an agent re-running it locally pays nothing; on a cold runner it is the 63s cargo install. The \"^0.9\" requirement resolves to cargo-llvm-cov 0.9.2, which is what was tested. rustup accepts both components in one invocation.",
+      "changed": "Took the final install command, with the guard and the version requirement, into the manifest."
+    },
+    {
+      "attempt": 12,
+      "tried": "Ran the coverage gate against this manifest end to end, by pointing BSF_TRUSTED_ROOT at a directory holding it as .factory/sandbox/manifest.json and running .factory/bin/bsf gates coverage, and validated the manifest with .factory/bin/bsf sandbox check.",
+      "observed": "Recorded in the trial's own steps; see the commands section. The manifest validates as a build_and_test sandbox with run and seed null and app_url null, which is what the trial should measure: install, build and test pass, the control run in an empty directory fails with \"could not find Cargo.toml\", and there is no run command to start, so reachedTier cannot return above build_and_test.",
+      "changed": "Nothing after validation passed."
+    },
+    {
+      "attempt": 13,
       "tried": "trial of round 1: install, build, test, control",
       "observed": "reached build_and_test, as claimed",
       "changed": null
     }
   ],
-  "frozen_at": "2026-11-21T05:35:48.073Z"
+  "amended_by": [
+    "coverage-and-checkers"
+  ],
+  "frozen_at": "2026-11-21T10:04:16.055Z"
 }
