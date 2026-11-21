@@ -131,11 +131,16 @@ safe-outputs:
       policy: ${{ inputs.protected_files_policy }}
     staged: ${{ inputs.staged }}
   add-comment:
+    # A role is dispatched, not triggered by an issue, so there is no
+    # triggering item to default to: the agent names the issue or PR.
+    target: "*"
     staged: ${{ inputs.staged }}
   # Threat detection runs on every safe output before a separate job applies it.
   threat-detection:
     enabled: true
-  upload-artifact:
+  # No upload-artifact safe output here: with create-pull-request beside it,
+  # gh-aw 1.2 and 1.3 put the PR checkout ahead of the App token it reads, and
+  # the PR never opened. Media goes through bsf store-media instead.
 
 pre-agent-steps:
   # The runner that judges a change must not come from the change. A pull
@@ -216,7 +221,8 @@ post-steps:
       app-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
       private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
       permission-contents: write
-      permission-actions: read
+      # write: a sandbox report starts factory-setup to amend the sandbox.
+      permission-actions: write
       # Scoped to this repository: an App token otherwise reaches every repo
       # the installation covers.
       owner: ${{ github.repository_owner }}
@@ -236,6 +242,14 @@ post-steps:
     with:
       name: step-report-builder-${{ inputs.attempt }}
       path: /tmp/gh-aw/agent/bsf/step-report.json
+  # The one way the sandbox changes after setup: the agent said it could not
+  # exercise something its change needs. Nothing happens without the report.
+  - name: Hand a sandbox report to setup
+    shell: bash
+    env:
+      GH_TOKEN: ${{ steps.write-token.outputs.token }}
+      WORK_ITEM: ${{ inputs.work_item }}
+    run: bsf sandbox report --from /tmp/gh-aw/agent/bsf/sandbox-report.json --work-item "$WORK_ITEM"
 ---
 # Builder
 
