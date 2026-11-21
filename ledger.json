@@ -1,11 +1,11 @@
 {
   "schema": "ledger/1",
-  "updated_at": "2026-11-21T07:58:54.448Z",
+  "updated_at": "2026-11-21T08:02:40.917Z",
   "open": [
     {
       "work_item": "wi_01M7YHT0YD7WBNDFM09VXFVQQY",
       "pipeline": "product_work",
-      "status": "running",
+      "status": "needs_info",
       "fingerprint": "sha256:0f539092afdb82069bd699a70bcd45c466be10b3646f9d4422ff6d6854e6b6f6",
       "priority": "normal",
       "created_at": "2026-11-21T07:58:19.597Z",
