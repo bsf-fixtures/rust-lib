@@ -1,0 +1,141 @@
+{
+  "schema": "sandbox/1",
+  "tier": "build_and_test",
+  "tier_reason": "invoice-core is a library crate: Cargo.toml declares no [[bin]] and no [[example]], src/ contains no main(), and nothing in the repo opens a socket. There is no process to start and no URL to open, so renders is unreachable by construction rather than by a missing dependency. The crate compiles and its 7 unit tests run, which is build_and_test.",
+  "commands": {
+    "install": "rustup component add clippy && cargo fetch --locked",
+    "build": "cargo build --all-targets",
+    "run": null,
+    "test": "cargo test --all-targets",
+    "seed": null
+  },
+  "app_url": null,
+  "env": [
+    {
+      "name": "RUST_BACKTRACE",
+      "kind": "self",
+      "value": "1",
+      "why": "The crate itself reads no environment variable anywhere (no env::var, env!, or option_env! in src/). This one is the test harness's own configuration, set to its real value so that when a verifier makes a change that panics, the test output names the frame instead of telling it to re-run with a backtrace it cannot then re-run with. Nothing in the library depends on it."
+    }
+  ],
+  "services": [],
+  "egress": [
+    "static.rust-lang.org",
+    "crates.io",
+    "index.crates.io",
+    "static.crates.io"
+  ],
+  "stubs": [],
+  "dropped": [
+    {
+      "from": ".github/workflows/ci.yml",
+      "what": "cargo clippy --all-targets -- -D warnings",
+      "why": "It is a lint, not a build. `bsf gates static` runs clippy itself through its own rule pack and compares each rule's count per file against .factory/guardrails/baselines.json, which is the point of Cargo.toml setting clippy::unwrap_used to \"warn\" rather than \"deny\". Putting -D warnings in the sandbox's build command would fail the build on the first new warning and hide the per-rule comparison the gate exists to make. The install command still adds the clippy component so the gate has it."
+    },
+    {
+      "from": "Cargo.toml",
+      "what": "license = \"MIT\" with publish = false",
+      "why": "Release metadata. `cargo publish` is disabled in the manifest and nothing in the sandbox should attempt it; there is no packaging or release step to carry over."
+    },
+    {
+      "from": "README.md",
+      "what": "The stated build commands were re-derived rather than copied",
+      "why": "The README gives `cargo test` and `cargo clippy --all-targets -- -D warnings`. Both were run here before being recorded; `--all-targets` was added to the test command so that example and integration targets a builder adds later are compiled by the same command, matching ci.yml rather than the README's shorter form."
+    },
+    {
+      "from": "toolchain, verified here but kept out of the build path",
+      "what": "rustup component add llvm-tools-preview && cargo install cargo-llvm-cov --locked, then cargo llvm-cov --all-targets --lcov --output-path coverage/lcov.info",
+      "why": "This was installed and run in the setup sandbox: it passes and reports 100% line coverage on both source files, in the coverage/lcov.info path `bsf gates coverage` reads. It is deliberately not in install or test. The repo configures no coverage tool, so this would put a from-source cargo install of a tool the repo does not declare into the critical path that the trial measures the tier on, for a gate that is non-blocking today (coverage.json has floor_pct 0, so a missing report is neutral, not a failure). Recorded under capabilities.not_exercised with the exact recipe so an amendment episode is cheap if a role needs it."
+    }
+  ],
+  "capabilities": {
+    "exercised": [
+      "Compiling the crate and all its targets from source with cargo build --all-targets, with no network access needed after install because the dependency and dev-dependency tables are both empty.",
+      "Running the 7 unit tests in src/money.rs and src/invoice.rs with cargo test --all-targets: amount parsing, rejection of non-money input, half-away-from-zero rounding in basis points, two-place formatting, line subtotals, tax taken on the net total rather than per line, and the empty invoice.",
+      "Calling the library directly from a scratch example, which is how a verifier sees behaviour here since there is nothing to open or curl. Verified in this sandbox: writing examples/scratch_check.rs against the names re-exported from lib.rs (Cents, Invoice, Line, Total) and running cargo run --example scratch_check printed net 64.97, tax 12.99, gross 77.96 for three lines of 19.99 plus one of 5.00 at 2000 bps, and None for the bad amount \"1.5\".",
+      "Linting with clippy: cargo clippy --all-targets runs clean, and the clippy component is installed by the install command so `bsf gates static` has the tool it needs for the clippy::unwrap_used baseline.",
+      "Rebuilding offline: the empty [dependencies] and [dev-dependencies] tables mean nothing is fetched, so a change that adds a dependency is visible as the first command that needs the network."
+    ],
+    "not_exercised": [
+      {
+        "what": "Anything a browser, an HTTP client or a running process would show. There is no screenshot, no page and no endpoint.",
+        "paths": [],
+        "why": "The crate has no binary target and no server. This is the repo's stated purpose as a fixture: runtime verification where there is nothing to open and nothing to curl. A verifier has to call the code from a scratch example or a test, which is listed under exercised."
+      },
+      {
+        "what": "Line coverage is not measured, so `bsf gates coverage` finds no report and reports neutral rather than checking the 80% diff-coverage minimum in .factory/guardrails/coverage.json.",
+        "paths": [
+          "src/money.rs",
+          "src/invoice.rs"
+        ],
+        "why": "The repo declares no coverage tool. Making it work needs cargo-llvm-cov, which is not preinstalled and has to be compiled from source. The recipe was verified here and is recorded under dropped; it was kept out of install and test so that a tool the repo does not declare cannot sink the measured tier for a gate that does not block today. Since floor_pct is 0, enabling it would immediately ratchet the floor toward 100%, which is a guardrail decision for the hardener rather than something setup should impose."
+      },
+      {
+        "what": "Documentation tests. cargo test --all-targets does not run doctests.",
+        "paths": [
+          "src/lib.rs",
+          "src/money.rs",
+          "src/invoice.rs"
+        ],
+        "why": "This matches ci.yml, which also uses --all-targets. The doc comments in all three files are prose explaining why a rule exists and contain no ``` examples, so there is nothing to run today. If a builder adds a doc example, cargo test --doc would be needed and is not in the test command."
+      },
+      {
+        "what": "Integer overflow behaviour in release mode. Cents::basis_points computes self.0 * bps without checked arithmetic, unlike Cents::parse which uses checked_mul and checked_add.",
+        "paths": [
+          "src/money.rs"
+        ],
+        "why": "Everything here runs on the dev profile, where arithmetic overflow panics; a release build wraps silently instead. Nothing in the sandbox builds or tests with --release, so the two profiles' behaviour for an extreme amount is not compared. Noted as an observation about what verification covers, not as a claim about whether the current behaviour is wrong."
+      },
+      {
+        "what": "Anything concurrent, persistent or networked.",
+        "paths": [],
+        "why": "There is none: no async runtime, no filesystem or database access, no HTTP client, and no third-party crate at all. The services and stubs lists are empty because the app genuinely needs neither, not because they could not be reached."
+      }
+    ]
+  },
+  "episode": [
+    {
+      "attempt": 1,
+      "tried": "Read the repo before running anything: Cargo.toml and Cargo.lock (package invoice-core 0.1.0, edition 2021, publish = false, empty [dependencies] and [dev-dependencies], one lint setting clippy::unwrap_used = \"warn\"), README.md, .github/workflows/ci.yml, and all of src/ (lib.rs, money.rs, invoice.rs). Grepped src/ for env::var, env!, option_env! and std::env, and listed every non-.git, non-.factory, non-.github file in the repo to find config the code might read.",
+      "observed": "No environment variable is read anywhere in the crate, and there is no config file of any kind beyond Cargo.toml: no .env, no settings module, no Dockerfile, no compose file and no devcontainer. ci.yml installs the clippy component and runs cargo test --all-targets then cargo clippy --all-targets -- -D warnings; it sets up nothing else, which confirms the only prerequisite is a Rust toolchain. lib.rs declares two modules and re-exports Invoice, Line, Total and Cents; there is no main() and no [[bin]], so nothing can be started.",
+      "changed": "Settled on build_and_test before running a command, and on an env list holding only RUST_BACKTRACE rather than inventing variables the code does not read."
+    },
+    {
+      "attempt": 2,
+      "tried": "Ran the toolchain checks and then the candidate commands in the repo: cargo --version, rustc --version, cargo clippy --version, then cargo build --all-targets, cargo test --all-targets, cargo clippy --all-targets -- -D warnings, cargo fetch --locked and rustup component add clippy.",
+      "observed": "cargo 1.100.0 and rustc 1.100.0 with clippy 0.1.100 already present. Build finished in 0.64s. All 7 tests passed: 4 in money::tests and 3 in invoice::tests. Clippy finished with no warnings, so the current clippy::unwrap_used baseline is genuinely zero. cargo fetch --locked exited 0 and fetched nothing, as expected with no dependencies; rustup component add clippy printed \"component clippy is up to date\" and exited 0, so it is a safe no-op when the component is already there.",
+      "changed": "Fixed install to rustup component add clippy && cargo fetch --locked: the first guarantees the static gate's tool exists on a runner that lacks it, the second is the real dependency step and fails loudly if a future Cargo.lock drifts from Cargo.toml."
+    },
+    {
+      "attempt": 3,
+      "tried": "Checked the control condition the trial applies, by running the build and test commands from an empty directory outside the repo.",
+      "observed": "Both fail with \"error: could not find `Cargo.toml` in /tmp/gh-aw/agent/emptydir or any parent directory\". Neither command is guarded on anything, and neither passes without this repo's code.",
+      "changed": "Nothing. The commands were already the real ones."
+    },
+    {
+      "attempt": 4,
+      "tried": "Proved the verification story for a crate with nothing to open: wrote examples/scratch_check.rs importing Cents, Invoice and Line from the crate root, building a two-line invoice at 2000 bps from parsed amounts, and ran cargo run --example scratch_check.",
+      "observed": "It printed net 64.97, tax 12.99, gross 77.96, and \"bad input -> None\" for Cents::parse(\"1.5\"). The re-exports in lib.rs are enough: a verifier does not need to name the money or invoice modules. Also confirmed the cost of this recipe, which the runbook now states: because build and test both use --all-targets, a scratch example left behind becomes part of what every later build compiles, so it has to be deleted.",
+      "changed": "Deleted the example and left the repo as found. Added the recipe to the runbook's Verify section and to capabilities.exercised."
+    },
+    {
+      "attempt": 5,
+      "tried": "Tested whether the coverage gate could be made real: rustup component add llvm-tools-preview && cargo install cargo-llvm-cov --locked, then cargo llvm-cov --all-targets --lcov --output-path coverage/lcov.info, after reading how bsf finds a report (readCoverage looks for coverage/lcov.info among others) and what it does without one.",
+      "observed": "The tool installed from source and exited 0, and the run produced coverage/lcov.info reporting LF:30 LH:30 for invoice.rs and LF:55 LH:55 for money.rs, so 100% of lines. But runCoverageGate returns neutral, not failure, when there is no report and floor_pct is 0, which is the case here. So the whole benefit is optional today, while the cost would be a from-source cargo install of a tool the repo does not declare sitting in the install step that the measured tier depends on.",
+      "changed": "Left the coverage tool out of install and test, and recorded the verified recipe under dropped and the gap under capabilities.not_exercised instead, so an amendment can turn it on deliberately. Then removed coverage/ and confirmed git status was unchanged from the start."
+    },
+    {
+      "attempt": 6,
+      "tried": "Validated the finished manifest with .factory/bin/bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json.",
+      "observed": "It printed \"valid sandbox manifest, tier build_and_test\" and exited 0. The claim is build_and_test with run and seed null and app_url null, which is what the trial should measure: install, build and test pass, the control run in an empty directory fails, and there is no run command for the trial to start, so reachedTier cannot return anything above build_and_test and should not return static.",
+      "changed": "Nothing after validation passed."
+    },
+    {
+      "attempt": 7,
+      "tried": "trial of round 1: install, build, test, control",
+      "observed": "reached build_and_test, as claimed",
+      "changed": null
+    }
+  ],
+  "frozen_at": "2026-11-21T05:35:48.073Z"
+}
