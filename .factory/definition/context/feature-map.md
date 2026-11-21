@@ -5,34 +5,88 @@
   Every agent reads this first. The question it has to answer is "where would
   this change go?" — so it names folders and what each one owns, not what the
   product does.
-
-  {{PLACEHOLDERS}} are filled in by setup.
 -->
 
-# Feature map — {{REPO_NAME}}
+# Feature map — rust-lib
 
-{{ONE_LINE_WHAT_THIS_REPO_IS}}
+A fixture repository for the Build Software Factory, meant to hold a Rust
+library. The library does not exist yet: nothing is tracked here but the
+factory's own definition, its workflows, its vendored runner and a one-line
+README.
 
 ## Feature folders
 
 | Folder | Owns | Depends on |
 | --- | --- | --- |
-{{FEATURE_FOLDER_ROWS}}
+
+**None.** There is no source tree. `git ls-files` returns 56 paths: 55 under
+`.factory/` or `.github/workflows/`, plus `README.md`. There is no
+`Cargo.toml`, no `src/`, no `tests/`, no `benches/` and no `examples/`. The
+single commit in this repo's history, `f6ec681`, is the factory install.
+
+The first feature folder will be created by the first work item that adds code.
+Until then this table is empty on purpose, and an agent asking "where would this
+change go?" should read the next section rather than this one.
 
 ## Shared
 
 | Folder | What it is | Rule |
 | --- | --- | --- |
-{{SHARED_FOLDER_ROWS}}
+
+**None**, for the same reason. Nothing is shared because nothing exists.
+
+The two directories that do exist are not feature or shared folders and no
+product work belongs in either:
+
+| Folder | What it is | Rule |
+| --- | --- | --- |
+| `.factory/` | The factory's own definition, guardrails, frozen sandbox and vendored runner. | Protected by `policy.yaml`. `.factory/bin/**`, `policy.yaml` and `.factory/sandbox/**` need a trusted human's approval; the hardening pipeline may tighten `.factory/guardrails/**`. Never product code. |
+| `.github/workflows/` | The factory's 30 workflows: intake, gates, merge queue, audit, the seven compiled role workflows and the setup pair. | Protected, and never excluded from the protected-file check in any pipeline. |
 
 ## Where things go
 
-- **A new feature** gets its own folder under {{FEATURE_ROOT}}.
-- **Something used by two features** moves to {{SHARED_ROOT}}, and not before
-  the second use. One caller is not a shared concern.
-- **Nothing in a feature folder imports from another feature folder.** Where
-  two features need the same thing, it belongs in shared.
+The layout below is **not an observation** — there is no layout yet to observe.
+It is the convention this repo should adopt, taken from Cargo's own project
+layout and from what `.factory/definition/policy.yaml` already treats as a test
+path (`tests/**`). The first work item that adds code establishes it; after
+that, this section describes what is there.
+
+- **A new feature** gets its own module folder under `src/`, declared in
+  `src/lib.rs`. Its integration tests go in `tests/`, which policy already
+  classifies as test paths, so edits to them are checked against the spec's
+  `tests_changed`.
+- **Something used by two features** moves to a shared module under `src/`, and
+  not before the second use. One caller is not a shared concern. If the repo
+  ever becomes a Cargo workspace, shared code becomes its own member crate and
+  this rule applies across members unchanged.
+- **Nothing in a feature folder imports from another feature folder.** In Rust
+  this means a module under `src/` does not `use crate::<other_feature>::…`.
+  Where two features need the same thing, it belongs in shared.
+
+`Cargo.toml` at the repo root is the trigger for two things the gates do
+automatically, so it is worth knowing it is load-bearing: gate 1 adds clippy to
+its linters only when that file exists, and the frozen sandbox's build and test
+commands skip entirely until it does.
 
 ## Not in this repo
 
-{{OUT_OF_SCOPE}}
+- **Any Rust code.** No crate, no manifest, no lockfile, no tests.
+- **Any application configuration.** Nothing reads an environment variable, a
+  config file or a settings module, because there is nothing to read it.
+- **Any container or deployment configuration.** No `Dockerfile`, no
+  `docker-compose.yml`, no `.devcontainer/`, no `Procfile`, no release or
+  deploy script.
+- **Any application CI.** Every workflow present belongs to the factory. There
+  is no test, lint or release workflow of the repo's own, which is why
+  `factory.yaml`'s `existing_ci.test_check` is null.
+- **Any service, database, queue or third party.** `services` and `stubs` in the
+  frozen sandbox are both empty, and the sandbox's egress is the crates.io and
+  rust-lang hosts only.
+- **A runnable application.** A library crate has no binary and no server, so
+  the sandbox has no `run` command and no `app_url`, and verification here
+  cannot render anything.
+- **Lint configuration of the repo's own.** There is no `clippy.toml`,
+  `rustfmt.toml` or `.rustfmt.toml`. Note that `policy.yaml`'s
+  `paths.guardrails` lists the JavaScript and Python tool configs but no Rust
+  one, so a `clippy.toml` added later would not be classified as a guardrail
+  until that list is extended — a definition change, needing a trusted human.

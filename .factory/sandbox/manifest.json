@@ -1,0 +1,138 @@
+{
+  "schema": "sandbox/1",
+  "tier": "build_and_test",
+  "tier_reason": "Not renders: this repo is meant to hold a Rust library, and a library crate has no binary, no server and no page, so there is nothing for a browser to open. Not static either: the Rust toolchain is present and the real cargo commands are wired in, so build and test run for real on the first commit that adds a Cargo.toml. Be clear about what build_and_test means today — the repo currently contains no crate at all (only the factory's own definition, its workflows and a README), so each command deliberately skips when there is no Cargo.toml at the root and the measured pass is over an empty workspace.",
+  "commands": {
+    "install": "rustup component add clippy rustfmt >/dev/null 2>&1 || echo 'clippy/rustfmt: keeping the preinstalled toolchain'; if [ -f Cargo.toml ]; then cargo fetch; else echo 'no Cargo.toml at the repo root yet - nothing to fetch'; fi",
+    "build": "if [ -f Cargo.toml ]; then cargo build --workspace --all-targets; else echo 'no Cargo.toml at the repo root yet - nothing to build'; fi",
+    "run": null,
+    "test": "if [ -f Cargo.toml ]; then cargo test --workspace; else echo 'no Cargo.toml at the repo root yet - no tests to run'; fi",
+    "seed": null
+  },
+  "app_url": null,
+  "env": [
+    {
+      "name": "RUST_BACKTRACE",
+      "kind": "self",
+      "value": "1",
+      "why": "A panic in a test prints a backtrace instead of only the assertion line, so a failing verifier run says where it broke rather than only that it broke. The sandbox environment is closed, so this has to be listed to exist at all."
+    },
+    {
+      "name": "CARGO_TERM_COLOR",
+      "kind": "self",
+      "value": "never",
+      "why": "cargo's output is captured into step logs and into the trial's tail of the last 40 lines. ANSI colour escapes make both unreadable, and cargo emits them whenever it thinks it has a terminal."
+    }
+  ],
+  "services": [],
+  "egress": [
+    "crates.io",
+    "index.crates.io",
+    "static.crates.io",
+    "static.rust-lang.org"
+  ],
+  "stubs": [],
+  "dropped": [
+    {
+      "from": ".github/workflows/factory-*.yml",
+      "what": "Every workflow in the repo: intake, gates, the merge queue, the audit, the seven compiled role workflows and the setup pair.",
+      "why": "They orchestrate the factory on GitHub Actions. None of them installs, builds or runs the application, so none describes what the sandbox needs. The gates run the commands in this manifest rather than the other way round."
+    },
+    {
+      "from": ".factory/bin/bsf, .factory/bin/runner.tgz",
+      "what": "The vendored factory runner and its Node bundle.",
+      "why": "It is the program that reads this manifest, not part of the app under test. The trial puts a trusted copy on PATH itself; the sandbox must not try to install or build it."
+    },
+    {
+      "from": "the repo as a whole",
+      "what": "No container, compose, devcontainer or deploy configuration was dropped, because none exists.",
+      "why": "Recorded so the absence is a finding rather than an oversight: there is no Dockerfile, no docker-compose.yml, no .devcontainer/, no Procfile, no release or deploy script and no application CI workflow anywhere in the repo. Nothing about production was available to leak into the sandbox."
+    }
+  ],
+  "capabilities": {
+    "exercised": [
+      "cargo build --workspace --all-targets, which compiles the lib target and every bin, example, test and bench target the crate declares, once one exists.",
+      "cargo test --workspace: unit tests in src/, integration tests under tests/, and doc-tests in /// examples. Verified against a throwaway crate in /tmp, where the unit test and the doc-test both ran and passed.",
+      "Resolving and downloading dependencies from crates.io. Verified: cargo fetch pulled serde, serde_derive, syn, proc-macro2 and unicode-ident over the network from this sandbox.",
+      "cargo clippy with --message-format=json, which gate 1 runs itself. It only runs when a Cargo.toml is present at the repo root, so today it is skipped and from the first crate onwards it is not.",
+      "rustfmt and clippy are on the toolchain, so a formatting or lint check added later has its tools already.",
+      "Compiling for the host target, x86_64-unknown-linux-gnu, with the default feature set, on stable Rust 1.100.0."
+    ],
+    "not_exercised": [
+      {
+        "what": "Anything in this repo at all. There is no crate here yet, so build and test are no-ops and the trial's pass measures the toolchain rather than the code.",
+        "why": "The repo contains only .factory/, .github/workflows/ and a one-line README. The commands are the real cargo commands with a guard on the Cargo.toml that does not exist yet; the first commit that adds one makes every command bite, and a failure after that is a real failure. No paths are listed here on purpose: the first PR that adds src/ should be built and tested by this manifest, not routed into an amendment."
+      },
+      {
+        "what": "Line coverage. Nothing in the test command writes coverage/lcov.info, which is where gate 2 looks for a report.",
+        "paths": [
+          ".factory/guardrails/coverage.json"
+        ],
+        "why": "Measuring Rust coverage needs cargo-llvm-cov, which is not in the toolchain here and would have to be compiled from source on every sandbox start. With floor_pct at 0 the coverage gate reports neutral rather than failing, so nothing is blocked today. When the crate is worth a floor, an amendment should add the tool to install and have test write coverage/lcov.info."
+      },
+      {
+        "what": "Anything that renders. No browser, no screenshot, no click-through: there is no process to start and no URL to open.",
+        "why": "A library crate has no HTTP surface, which is why run and app_url are null. If the repo later gains a bin target or an example server, an amendment should add a run command and an app_url and the tier can move to renders."
+      },
+      {
+        "what": "Cross-compilation, non-default feature combinations, no_std builds, MSRV checks and toolchains other than stable.",
+        "why": "Only the host target's standard library is installed and only the default feature set is built. A --all-features or --no-default-features matrix, a target added with rustup target add, or a pinned older toolchain would each need install extended first."
+      },
+      {
+        "what": "Any configuration the crate reads, any service it talks to and any third party it calls.",
+        "why": "No code exists that reads an environment variable, opens a socket or holds a credential, so no variable, service or stub could be identified from reading the repo — which is why services and stubs are both empty and env holds only two toolchain diagnostics. The sandbox environment is closed, so the first code that needs a variable fails loudly here instead of quietly reaching something real, and that failure is the signal to amend."
+      }
+    ]
+  },
+  "episode": [
+    {
+      "attempt": 1,
+      "tried": "Read the repo before running anything: git ls-files, the README, every top-level directory, .factory/definition/factory.yaml, .factory/definition/policy.yaml, the guardrail files, and all 30 workflows in .github/.",
+      "observed": "The repo holds no application. Tracked files are the factory's definition, its workflows, its vendored runner, and a README whose whole content is 'Build Software Factory: Fixture of a Rust Lib to install factory on'. There is no Cargo.toml, no src/, no tests/, no Dockerfile, no compose file, no devcontainer and no application CI. git log is a single commit, the factory install. So there is no manifest file to read install, build, test or run out of, and no place where code reads configuration.",
+      "changed": "Set the shape of the hypothesis: a Rust toolchain sandbox with no services, no stubs and no application variables, and the name 'rust-lib' plus the README as the only evidence of what the repo is for."
+    },
+    {
+      "attempt": 2,
+      "tried": "Checked what the toolchain already provides and whether the registry is reachable: cargo --version, rustc --version, cargo clippy --version, cargo fmt --version, rustup component list --installed, and a request to index.crates.io.",
+      "observed": "cargo and rustc 1.100.0, clippy 0.1.100 and rustfmt 1.11.0 are on PATH at ~/.cargo/bin, with rust-std for x86_64-unknown-linux-gnu. index.crates.io answered 200.",
+      "changed": "Dropped any thought of installing a toolchain. Set egress to the four crates.io and rust-lang hosts cargo and rustup actually use."
+    },
+    {
+      "attempt": 3,
+      "tried": "Proved the unguarded commands work on real code rather than assuming it: built a throwaway crate in /tmp with a lib target, a unit test, a doc-test and a serde dependency, then ran cargo fetch, cargo build --workspace --all-targets, cargo test --workspace and cargo clippy --quiet --message-format=json.",
+      "observed": "cargo fetch downloaded serde, serde_derive, syn, proc-macro2 and unicode-ident. The build finished. cargo test ran both the unit test and the doc-test and both passed. clippy emitted JSON ending in build-finished success:true, which is the shape gate 1 parses. Running the same crate with cargo test --workspace --all-targets reported only the unit test: --all-targets silently drops the Doc-tests section, and for a library the /// examples are public surface.",
+      "changed": "Settled on cargo build --workspace --all-targets for the build and plain cargo test --workspace for the test, deliberately not symmetrical: --all-targets is what makes the build compile test and example targets, and is what would have made the test command skip doc-tests. --workspace is right for a single crate as well as a workspace, so neither needs changing if the repo grows members. Left --locked off, because Cargo.lock does not exist yet and --locked would fail on the first build."
+    },
+    {
+      "attempt": 4,
+      "tried": "Ran bare cargo build --workspace --all-targets in the repo workspace, the way the trial would.",
+      "observed": "exit 101: 'could not find Cargo.toml in /home/runner/work/rust-lib/rust-lib or any parent directory'. With the real commands unguarded the trial would fail at build and the sandbox would freeze at static, which would tell every role never to compile or test the Rust code the factory is here to write.",
+      "changed": "Guarded install, build and test on [ -f Cargo.toml ]. The guard only skips while no crate exists; from the first Cargo.toml onwards each command runs unguarded and its failure is a real failure."
+    },
+    {
+      "attempt": 5,
+      "tried": "Ran all three guarded commands in the repo workspace.",
+      "observed": "All three exited 0, each printing that there is no Cargo.toml yet. git status was unchanged afterwards, so nothing was written into the repo.",
+      "changed": "Nothing. This is what the trial will measure, which is why the tier is build_and_test and why tier_reason says plainly that the pass is over an empty workspace."
+    },
+    {
+      "attempt": 6,
+      "tried": "Read what the gates themselves look for, in the runner bundle, so the manifest matches rather than guesses: the static gate's linter discovery and the coverage gate's report discovery.",
+      "observed": "Gate 1 adds clippy to the native linters only when Cargo.toml exists at the root, so it needs nothing from install beyond a toolchain with clippy on it. Gate 2 reads coverage/lcov.info and, finding nothing with floor_pct at 0, returns neutral rather than a failure.",
+      "changed": "Left cargo-llvm-cov out of install rather than paying a from-source compile on every sandbox start for a repo with no code, and recorded coverage under not_exercised with what an amendment would have to add."
+    },
+    {
+      "attempt": 7,
+      "tried": "bsf sandbox check --file /tmp/gh-aw/agent/bsf/setup/manifest.json.",
+      "observed": "Valid, at tier build_and_test.",
+      "changed": "Nothing."
+    },
+    {
+      "attempt": 8,
+      "tried": "trial of round 1: install, build, test",
+      "observed": "reached build_and_test, as claimed",
+      "changed": null
+    }
+  ],
+  "frozen_at": "2026-11-21T04:43:29.716Z"
+}

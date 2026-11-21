@@ -1,0 +1,12 @@
+# Documentation hosts the spec role may read when it researches this repo's stack.
+#
+# This repo declares no dependencies — there is no Cargo.toml yet — so there is
+# no third-party crate whose docs could be listed. What is left is the stack the
+# repo is for: the Rust language, its standard library, Cargo, and the lint and
+# format tools gate 1 runs. docs.rs is here because it is where the docs for any
+# crate the factory later adds as a dependency live, under one host.
+
+doc.rust-lang.org
+docs.rs
+crates.io
+rust-lang.github.io
