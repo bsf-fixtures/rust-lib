@@ -98,6 +98,9 @@ tools:
 
 safe-outputs:
   add-comment:
+    # A role is dispatched, not triggered by an issue, so there is no
+    # triggering item to default to: the agent names the issue or PR.
+    target: "*"
     staged: ${{ inputs.staged }}
   upload-artifact:
   threat-detection:
@@ -252,8 +255,11 @@ would otherwise have to decide. Then write the plan.
 
 Before you finish, run
 `.factory/bin/bsf spec check --file /tmp/gh-aw/agent/bsf/spec.json --pipeline P`,
-with `P` the work item's `pipeline`. It applies the gate the spec must pass to be stored. Fix whatever it reports
+with `P` the work item's `pipeline`. It checks the spec's shape and applies the gate it must pass to be stored. Fix whatever it reports
 and run it again until it passes.
+
+These seven fields are the whole spec. The work item's schema allows no
+others, so a note that does not fit one of them goes in `plan`.
 
 ## How to size it
 
