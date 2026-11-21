@@ -191,7 +191,7 @@ jobs:
       - name: Start the sandbox
         env:
           FACTORY_SANDBOX_ENV: ${{ secrets.FACTORY_SANDBOX_ENV }}
-        run: bsf sandbox start
+        run: bsf sandbox start --if-present
       # Where the repo already has a CI test check that runs on factory
       # branches, this reads its result for the same commit rather than
       # re-running the tests; after wait_minutes with no result, it runs them.
